@@ -94,7 +94,7 @@ io.on("connection", async (socket) => {
 
 })
 
-app.get("/:orderId/messages", async (req,res) => {
+app.get("/orders/:orderId/messages", async (req,res) => {
 	console.log(req.params.orderId);
 	try {
 		const { rows } = await pool.query("SELECT * FROM chats WHERE order_id=$1", [req.params.orderId]);
@@ -104,48 +104,18 @@ app.get("/:orderId/messages", async (req,res) => {
 	}
 })
 
-app.post("/newOrder", async (req, res) => {
-	let clientId = req.body.client_id;
-	let order = req.body;
-	console.log("order",order);
-	let items = order.items;
-	const client = await pool.connect();
-	try {
-		const result = await client.query("INSERT INTO orders(fee,status,construction_date,receiver_name,receiver_phone,client_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING order_id",
-		[order.fee,"pending", order.construction_date, order.receiver_name, order.receiver_phone, clientId]);
-		console.log(result.rows[0].order_id);
-
-		for(var i=0;  i<items.length; i++){
-			console.log("item ->",items[i]);
-			items[i] = client.query("INSERT INTO items(name,description,weight,price,order_id) VALUES($1,$2,$3,$4,$5)",
-				[items[i].name, items[i].description, items[i].weight, items[i].price, result.rows[0].order_id]);
-		}
-
-		Promise.all(items).then(()=>{
-			client.release();
-			res.end("order_id:" + result.rows[0].order_id);
-		})
-
-	} catch(err){
-		console.error(err);
-		client.release();
-		res.end("order failed");
-	}
-
-});
-
-app.get("/clients/:id", async(req,res) => {
+app.get("/clients/:Id", async(req,res) => {
 	try{
-		let { rows } = await pool.query("SELECT name, email, phone, gender FROM clients WHERE client_id=$1",[req.params.id]);
+		let { rows } = await pool.query("SELECT name, email, phone, gender FROM clients WHERE client_id=$1",[req.params.Id]);
 		res.json(rows[0]);
 	} catch(err){
 		res.status(404).send(err);
 	}
 });
 
-app.get("/carriers/:id", async(req,res) => {
+app.get("/carriers/:Id", async(req,res) => {
 	try{
-		let { rows } = await pool.query("SELECT name, email, phone, gender, vehicle FROM carriers WHERE carrier_id=$1",[req.params.id]);
+		let { rows } = await pool.query("SELECT name, email, phone, gender, vehicle FROM carriers WHERE carrier_id=$1",[req.params.Id]);
 		res.json(rows[0]);
 	} catch(err){
 		res.status(404).send(err);
@@ -153,8 +123,8 @@ app.get("/carriers/:id", async(req,res) => {
 });
 
 
-app.get("/carrier/:id/photo", async(req,res) => {
-	res.sendFile("./photos/"+req.params.id+"/photo");
+app.get("/", async(req,res) => {
+	res.send("main page");
 });
 
 app.get("/client/:id/photo", async(req,res) => {
@@ -282,14 +252,10 @@ app.post("/updateOrder/:orderId", async (req,res) =>{
 				[items[i].name, items[i].description, items[i].weight, items[i].price, result.rows[0].order_id]);
 		}
 
-		Promise.all(items).then(()=>{
+		await Promise.all(items).then(()=>{
 			client.release();
 			res.end("order_id:"+orderId);
-		}).catch((err)=>{
-			console.log(err);
-			client.release();
-			res.end("order failed");
-		});
+		})
 	} catch(err){
 		console.error(err);
 		client.release();
@@ -297,22 +263,63 @@ app.post("/updateOrder/:orderId", async (req,res) =>{
 	}
 })
 
-//-------->
-app.get("/order/:orderId", async (req,res) => {
-	let orderId = req.params.orderId;
+app.post("/orders/newOrder", async (req, res) => {
+	let clientId = req.body.client_id;
+	let order = req.body;
+	console.log("order",order);
+	let items = order.items;
+	const client = await pool.connect();
 	try {
-		let results = await pool.query("SELECT * FROM orders INNER JOIN items ON orders.order_id=$1 AND orders.order_id=items.order_id",[orderId]);
-		res.json(results.rows[0]);
+		const result = await client.query("INSERT INTO orders(fee,status,delivery_date,receiver_name,receiver_phone,client_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING order_id",
+		[order.fee,"pending", order.delivery_date, order.receiver_name, order.receiver_phone, clientId]);
+		console.log(result.rows[0].order_id);
+
+		for(var i=0;  i<items.length; i++){
+			console.log("item ->",items[i]);
+			items[i] = client.query("INSERT INTO items(name,description,weight,price,order_id) VALUES($1,$2,$3,$4,$5)",
+				[items[i].name, items[i].description, items[i].weight, items[i].price, result.rows[0].order_id]);
+		}
+
+		await Promise.all(items).then(()=>{
+			client.release();
+			res.end("order_id:" + result.rows[0].order_id);
+		})
+
 	} catch(err){
 		console.error(err);
-		res.end("this order doesn't exist");
+		client.release();
+		res.end("order failed");
+	}
+
+});
+
+
+app.get("/orders/:orderId", async (req,res) => {
+	let orderId = req.params.orderId;
+	try {
+		let orderRes = await pool.query("SELECT * FROM orders WHERE order_id=$1",[orderId]);
+		let itemRes = await pool.query("SELECT * FROM items WHERE order_id=$1",[orderId]);
+		let order = {};
+		order.orderInfo = orderRes.rows[0];
+		order.items = itemRes.rows;
+		console.log(order);
+		res.json(order);
+	} catch(err){
+		console.error(err);
+		res.status(400).end(err);
 	}
 });
 
 
 // confirm order given orderID
-app.post("/confirmOrder", (req, res)=> {
-		res.send("nice");
+app.post("/orders/:orderId/confirm", async (req, res)=> {
+		let orderId = req.params.orderId;
+		try {
+			let results = await pool.query("UPDATE orders SET done=true WHERE order_id=$1",[orderId]);
+			res.status(200).end();
+		} catch (err) {
+			res.status(409).end();
+		}
 });
 
 app.post("/signUp", async (req,res) => {
@@ -334,7 +341,7 @@ app.post("/signUp", async (req,res) => {
 			console.log(userPhoto);
 			await userPhoto.mv("photos/clients/"+userId+"/userPhoto."+userPhoto.name.split(".")[1]);
 			await client.query("COMMIT");
-			res.json(result.rows[0]);
+			res.json(result.rows[0]); // TODO: send orderId only
 		} catch(err){
 			console.log("catching failture -> ", err);
 			await client.query("ROLLBACK");
@@ -356,7 +363,7 @@ app.post("/signUp", async (req,res) => {
 			console.log("--> inserting into carriers");
 			const result = await client.query("INSERT INTO carriers" +
 			"(name,email,password,address,phone,gender,vehicle,national_id,activated) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",
-			 [user.name,user.email,user.password,user.address,user.phone,user.gender,user.vehicle,user.national_id,false]);
+			 [user.name,user.email,user.password,user.address,user.phone,user.gender,user.vehicle,user.nationalId,false]);
 
 			 let userId = result.rows[0].carrier_id;
 
@@ -366,7 +373,7 @@ app.post("/signUp", async (req,res) => {
 			 let p4 = idCardFront.mv("photos/carriers/"+userId+"/idCardFront."+idCardFront.name.split(".")[1]);
 			 let p5 = idCardBack.mv("photos/carriers/"+userId+"/idCardBack."+idCardBack.name.split(".")[1]);
 
-			 Promise.all([p1,p2,p3,p4,p5]).then(async()=>{
+			 await Promise.all([p1,p2,p3,p4,p5]).then(async()=>{
 				 client.query("COMMIT");
 				 res.json(result.rows[0]);
 			 })
