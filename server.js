@@ -3,10 +3,13 @@
 */
 const express = require("express");
 const app = express();
+const path = require("path");
 const http = require("http").createServer(app);
 const io = require("socket.io")(http, {
 	perMessageDeflate: false
 });
+const { v4: uuidv4 } = require('uuid');
+console.log( uuidv4());
 const bodyParser = require("body-parser");
 const passwordHash = require("password-hash");
 const fileUpload = require('express-fileupload');
@@ -20,6 +23,7 @@ const pool = new Pool({
 
 /* middlewares*/
 app.disable('x-powered-by');
+app.use("/photos",express.static('photos'))
 app.use(bodyParser.urlencoded({
   extended: false
 }));
@@ -31,7 +35,9 @@ app.use(bodyParser.json());
 /*
 	constants
 */
+const dev = (process.env.DEV === "true");
 const port = process.env.PORT || "8000";
+const radiusDistance = 10;
 
 /*
 	Routes
@@ -97,21 +103,21 @@ io.on("connection", async (socket) => {
 app.get("/orders/:orderId/messages", async (req,res) => {
 	console.log(req.params.orderId);
 	try {
-		const { rows } = await pool.query("SELECT * FROM chats WHERE order_id=$1", [req.params.orderId]);
-		res.json(rows[0])
+		const { rows } = await pool.query("SELECT line_text, created_at FROM chats WHERE order_id=$1", [req.params.orderId]);
+		res.json(rows)
 	} catch (err) {
 		res.status(404).send(err);
 	}
 })
-
+/*
 app.get("/clients/:Id", async(req,res) => {
 	try{
-		let { rows } = await pool.query("SELECT name, email, phone, gender FROM clients WHERE client_id=$1",[req.params.Id]);
-		res.json(rows[0]);
+		let client = await pool.query("SELECT name, email, phone, gender FROM clients WHERE client_id=$1",[req.params.Id]);
+		res.json(client.rows[0]);
 	} catch(err){
 		res.status(404).send(err);
 	}
-});
+});*/
 
 app.get("/carriers/:Id", async(req,res) => {
 	try{
@@ -127,9 +133,6 @@ app.get("/", async(req,res) => {
 	res.send("main page");
 });
 
-app.get("/client/:id/photo", async(req,res) => {
-
-});
 /*
 	orderDetails: {
 			item1: value1,
@@ -164,14 +167,13 @@ let userLocations = {};/* {
 
 }*/
 
-const radiusDistance = 10;
 
 app.get("/getCarriers/:vehicleType", async (req,res) => {
 	let vehicleType = req.params.vehicleType;
 	let x = req.query.x;
 	let y = req.query.y;
 
-	// doni't block the main thread !!
+	// don't block the main thread !!
 
 	let userIds = Object.keys(userLocations);
 	let availableCarriers=[]; //= [1,2,3,4];
@@ -203,19 +205,25 @@ app.get("/getCarriers/:vehicleType", async (req,res) => {
 });
 
 app.post("/updateLocation", async (req,res) => {
-	let x = req.query.x;
-	let y = req.query.y;
-	let userId = req.query.userId;
+	let x = req.body.x;
+	let y = req.body.y;
+	let userId = req.body.userId;
 	console.log(x,y,userId);
 	userLocations[userId] = {};
 	userLocations[userId].x = x;
 	userLocations[userId].y = y;
-	res.json(userLocations);
+	res.status(200).end();
 });
 
+app.post("/test", async (req,res)=>{
+	console.log("query", req.query);
+	console.log("body", req.body);
+	res.json(req.query);
+})
 
 // not used for now
 app.post("/updateOrder/:orderId", async (req,res) =>{
+
 	/* efficient way commented */
 	/*let orderId = req.params.orderId;
 	const client = await pool.connect();
@@ -239,8 +247,9 @@ app.post("/updateOrder/:orderId", async (req,res) =>{
 	let clientId = req.body.client_id;
 	let order = req.body;
 	let items = order.items;
-	const client = await pool.connect();
+	var client;
 	try {
+		client = await pool.connect()
 		await client.query("DELETE FROM orders WHERE order_id=$1",[orderId]);
 		const result = await client.query("INSERT INTO orders(order_id,fee,status,construction_date,receiver_name,receiver_phone,client_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING order_id",
 		[orderId,order.fee,"pending", order.construction_date, order.receiver_name, order.receiver_phone, clientId]);
@@ -258,7 +267,7 @@ app.post("/updateOrder/:orderId", async (req,res) =>{
 		})
 	} catch(err){
 		console.error(err);
-		client.release();
+		if(client)client.release();
 		res.end("error updating the order");
 	}
 })
@@ -268,8 +277,9 @@ app.post("/orders/newOrder", async (req, res) => {
 	let order = req.body;
 	console.log("order",order);
 	let items = order.items;
-	const client = await pool.connect();
+	var client;
 	try {
+		client = await pool.connect();
 		const result = await client.query("INSERT INTO orders(fee,status,delivery_date,receiver_name,receiver_phone,client_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING order_id",
 		[order.fee,"pending", order.delivery_date, order.receiver_name, order.receiver_phone, clientId]);
 		console.log(result.rows[0].order_id);
@@ -287,7 +297,7 @@ app.post("/orders/newOrder", async (req, res) => {
 
 	} catch(err){
 		console.error(err);
-		client.release();
+		if(client) client.release();
 		res.end("order failed");
 	}
 
@@ -322,56 +332,76 @@ app.post("/orders/:orderId/confirm", async (req, res)=> {
 		}
 });
 
+// path inclusuve of last '/'
+// fileName (with exentsion)
+function constructPath(fileName, newFileName, path){
+	 return path + newFileName +"."+fileName.split(".")[1]
+}
+
 app.post("/signUp", async (req,res) => {
 	console.log("req.body", req.body);
 	let user = req.body;
 	// name address email pswd gender phone number
 	// userType = client or carrier
-	let client = await pool.connect();
+	var client;
+
 	if(user.userType === "client"){
 		try {
+			client = await pool.connect();
 			await client.query("BEGIN");
-			let userPhoto = req.files.userPhoto;
-			console.log("--> inserting into clients");
+			let userPhoto = req.files && req.files.userPhoto ;
+			let newPhotoPath;
+			let clientId = await uuidv4();
+			if(userPhoto)
+				 newPhotoPath = constructPath(userPhoto.name,"personalPhoto","/photos/clients/"+clientId+"/")
+			console.log(clientId);
+			console.log("--> inserting into clients")
 			const result = await client.query("INSERT INTO clients" +
-			"(name,email,password,address,phone,gender) VALUES($1,$2,$3,$4,$5,$6) RETURNING *",
-			[user.name,user.email,user.password,user.address,user.phone,user.gender]);
+			"(client_id,name,email,password,address,phone,gender,photo) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
+			[clientId,user.name,user.email,user.password,user.address,user.phone,user.gender,newPhotoPath]);
 
-			let userId = result.rows[0].client_id;
-			console.log(userPhoto);
-			await userPhoto.mv("photos/clients/"+userId+"/userPhoto."+userPhoto.name.split(".")[1]);
+			if(userPhoto)
+				await userPhoto.mv("."+newPhotoPath);
 			await client.query("COMMIT");
 			res.json(result.rows[0]); // TODO: send orderId only
-		} catch(err){
+		} catch(err) {
 			console.log("catching failture -> ", err);
-			await client.query("ROLLBACK");
+			if(client) await client.query("ROLLBACK");
 			res.status(500).send(err);
 		} finally {
-			console.log("releasing the client ..");
-			client.release();
+			if(client) client.release();
 		}
 	} else if(user.userType == "carrier"){
 		//user.vehicle =
 		try {
+			client = await pool.connect();
 			await client.query("BEGIN");
+			let userId = await uuidv4();
 			let userPhoto = req.files.userPhoto;
 			let licensePhotoFront = req.files.licensePhotoFront;
 			let licensePhotoBack = req.files.licensePhotoBack;
 			let idCardFront = req.files.idCardFront;
 			let idCardBack = req.files.idCardBack;
 
+			let userPhotoPath = "/photos/carriers/"+userId+"/userPhoto."+userPhoto.name.split(".")[1];
+			let licensePhotoFrontPath = "/photos/carriers/"+userId+"/licensePhotoFront."+licensePhotoBack.name.split(".")[1];
+			let licensePhotoBackPath = "/photos/carriers/"+userId+"/licensePhotoBack."+licensePhotoFront.name.split(".")[1];
+			let idCardFrontPath = "/photos/carriers/"+userId+"/idCardFront."+idCardFront.name.split(".")[1];
+			let idCardBackPath = "/photos/carriers/"+userId+"/idCardBack."+idCardBack.name.split(".")[1];
+
 			console.log("--> inserting into carriers");
 			const result = await client.query("INSERT INTO carriers" +
-			"(name,email,password,address,phone,gender,vehicle,national_id,activated) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",
-			 [user.name,user.email,user.password,user.address,user.phone,user.gender,user.vehicle,user.nationalId,false]);
+			"(carrier_id,name,email,password,address,phone,gender,vehicle,national_id,active"+
+			",photo,license_photo_front,license_photo_back,id_photo_front,id_photo_back)"+
+			" VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *",
+			 [userId,user.name,user.email,user.password,user.address,user.phone,user.gender,user.vehicle,user.nationalId,false,
+			 userPhotoPath,licensePhotoFrontPath,licensePhotoBackPath,idCardFrontPath,idCardBackPath]);
 
-			 let userId = result.rows[0].carrier_id;
-
-			 let p1 = userPhoto.mv("photos/carriers/"+userId+"/userPhoto."+userPhoto.name.split(".")[1]);
-			 let p2 = licensePhotoFront.mv("photos/carriers/"+userId+"/licensePhotoFront."+licensePhotoFront.name.split(".")[1]);
-			 let p3 = licensePhotoBack.mv("photos/carriers/"+userId+"/licensePhotoBack."+licensePhotoBack.name.split(".")[1]);
-			 let p4 = idCardFront.mv("photos/carriers/"+userId+"/idCardFront."+idCardFront.name.split(".")[1]);
-			 let p5 = idCardBack.mv("photos/carriers/"+userId+"/idCardBack."+idCardBack.name.split(".")[1]);
+			 let p1 = userPhoto.mv("."+userPhotoPath);
+			 let p2 = licensePhotoFront.mv("."+licensePhotoFrontPath);
+			 let p3 = licensePhotoBack.mv("."+licensePhotoBackPath);
+			 let p4 = idCardFront.mv("."+idCardFrontPath);
+			 let p5 = idCardBack.mv("."+idCardBackPath);
 
 			 await Promise.all([p1,p2,p3,p4,p5]).then(async()=>{
 				 client.query("COMMIT");
@@ -379,10 +409,10 @@ app.post("/signUp", async (req,res) => {
 			 })
 		} catch(err){
 			console.log("catch outside try -> ",err)
-			await client.query("ROLLBACK");
-			res.status(500).send(err);
+			if(client) await client.query("ROLLBACK");
+			res.status(400).send(err);
 		} finally {
-			client.release();
+			if(client) client.release();
 		}
 	} else {
 		res.end("Invalid user type.")
