@@ -43,9 +43,14 @@ const radiusDistance = 10;
 	Routes
 */
 
-app.get("/", (req,res) => {
-	res.sendFile(__dirname + "/index.html");
+app.post("/test", async (req,res)=>{
+	console.log("query", req.query);
+	console.log("body", req.body);
+	res.json(req.query);
 })
+app.get("/", async(req,res) => {
+	res.end("main page");
+});
 
 
 /* helping functions */
@@ -72,8 +77,7 @@ async function getImages(images,names,path){
 }
 
 
-/* --------- */
-
+/* --------- CHAT  ------------*/
 io.on("connection", async (socket) => {
 	console.log("new conenction");
 	let clientId = socket.handshake.query.clientId;
@@ -100,6 +104,7 @@ io.on("connection", async (socket) => {
 
 })
 
+/* --------- message ----------- */
 app.get("/orders/:orderId/messages", async (req,res) => {
 	console.log(req.params.orderId);
 	try {
@@ -109,29 +114,45 @@ app.get("/orders/:orderId/messages", async (req,res) => {
 		res.status(404).send(err);
 	}
 })
-/*
+
 app.get("/clients/:Id", async(req,res) => {
 	try{
-		let client = await pool.query("SELECT name, email, phone, gender FROM clients WHERE client_id=$1",[req.params.Id]);
+		let client = await pool.query("SELECT name, email, phone, photo, gender FROM clients WHERE client_id=$1",[req.params.Id]);
 		res.json(client.rows[0]);
 	} catch(err){
 		res.status(404).send(err);
 	}
-});*/
+});
+app.get("/clients/:clientId/orders", async(req,res) =>{
+		let id = req.params.clientId;
+		try{
+			const orders = await pool.query("SELECT * from orders LEFT JOIN items ON orders.order_id=items.order_id WHERE client_id=$1",[id]);
+			console.log(orders);
+			res.json(orders.rows);
+		} catch (err) {
+			console.log("error getting client orders ->", err)
+			res.status(404).end("error");
+		}
+})
 
 app.get("/carriers/:Id", async(req,res) => {
 	try{
-		let { rows } = await pool.query("SELECT name, email, phone, gender, vehicle FROM carriers WHERE carrier_id=$1",[req.params.Id]);
+			let { rows } = await pool.query("SELECT name, email, phone, photo, gender, vehicle FROM carriers WHERE carrier_id=$1",[req.params.Id]);
 		res.json(rows[0]);
 	} catch(err){
 		res.status(404).send(err);
 	}
 });
-
-
-app.get("/", async(req,res) => {
-	res.send("main page");
-});
+app.get("/carriers/:carrierId/orders", async(req,res) =>{
+  	let id = req.params.carrierId;
+		try{
+			const orders = await pool.query("SELECT * from orders LEFT JOIN items ON orders.order_id=items.order_id WHERE carrier_id=$1",[id]);
+			res.end(orders.rows);
+		} catch (err) {
+			console.log("error getting carrier orders ->", err)
+			res.status(404).end(err);
+		}
+})
 
 /*
 	orderDetails: {
@@ -166,7 +187,6 @@ let userLocations = {};/* {
 	}
 
 }*/
-
 
 app.get("/getCarriers/:vehicleType", async (req,res) => {
 	let vehicleType = req.params.vehicleType;
@@ -215,34 +235,12 @@ app.post("/updateLocation", async (req,res) => {
 	res.status(200).end();
 });
 
-app.post("/test", async (req,res)=>{
-	console.log("query", req.query);
-	console.log("body", req.body);
-	res.json(req.query);
-})
-
+/* --------- orders ----------- */
 // not used for now
-app.post("/updateOrder/:orderId", async (req,res) =>{
 
-	/* efficient way commented */
-	/*let orderId = req.params.orderId;
-	const client = await pool.connect();
-	try {
-		// authorize client first .. add later
-		// update orderInfo first
-		let orderDetails = req.bodhy.orderDetails;
-		let updateCols = Object.keys(orderDetails);
-		let updateQuery = "";
-		for(let i=0; i<updateCols.length; i++){
-			let col = updateCols[i];
-			updateQuery += col + " = " + orderDetails.col;
-			if(i<updateCols.length-1) updateQuery+=", ";
-		}
-		console.log("updateQuery", updateQuery);
-		let promiseArr = [];
-		let p1 = client.query("UPDATE orders SET " + updateQuery + " WHERE order_id="+orderId);
 
-	}*/
+app.post("/orders/updateOrder/:orderId", async (req,res) =>{
+
 	let orderId = req.params.orderId;
 	let clientId = req.body.client_id;
 	let order = req.body;
@@ -263,7 +261,7 @@ app.post("/updateOrder/:orderId", async (req,res) =>{
 
 		await Promise.all(items).then(()=>{
 			client.release();
-			res.end("order_id:"+orderId);
+			res.end("order id:"+orderId);
 		})
 	} catch(err){
 		console.error(err);
@@ -273,36 +271,45 @@ app.post("/updateOrder/:orderId", async (req,res) =>{
 })
 
 app.post("/orders/newOrder", async (req, res) => {
-	let clientId = req.body.client_id;
+	let clientId = req.body.clientId;
+	let carrierId = req.body.carrierId;
 	let order = req.body;
-	console.log("order",order);
-	let items = order.items;
+	let items = order.items || [];
+	console.log("order",req.body);
+	console.log("item",items)
 	var client;
 	try {
 		client = await pool.connect();
-		const result = await client.query("INSERT INTO orders(fee,status,delivery_date,receiver_name,receiver_phone,client_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING order_id",
-		[order.fee,"pending", order.delivery_date, order.receiver_name, order.receiver_phone, clientId]);
-		console.log(result.rows[0].order_id);
+		await client.query("BEGIN")
+		let orderId = await uuidv4();
+		const result = await client.query("INSERT INTO orders(order_id,fee,status,delivery_date,receiver_name,receiver_phone,client_id,carrier_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
+		[orderId,order.fee,"pending", order.deliveryDate, order.receiverName, order.receiverPhone, clientId, carrierId]);
 
-		for(var i=0;  i<items.length; i++){
+		for(var i=0; i<items.length; i++){
 			console.log("item ->",items[i]);
-			items[i] = client.query("INSERT INTO items(name,description,weight,price,order_id) VALUES($1,$2,$3,$4,$5)",
-				[items[i].name, items[i].description, items[i].weight, items[i].price, result.rows[0].order_id]);
+			items[i] = JSON.parse(items[i]);
+			let itemId = await uuidv4();
+			items[i] = client.query("INSERT INTO items(item_id,name,description,weight,price,order_id) VALUES($1,$2,$3,$4,$5,$6)",
+				[itemId,items[i].name, items[i].description, items[i].weight, items[i].price, orderId]);
 		}
 
-		await Promise.all(items).then(()=>{
+		await Promise.all(items).then(async ()=>{
+			await client.query("COMMIT");
 			client.release();
-			res.end("order_id:" + result.rows[0].order_id);
+			res.end("order id:" + orderId);
 		})
 
 	} catch(err){
 		console.error(err);
-		if(client) client.release();
+		// the client may not connect thus calling client.release throws an error
+		if(client){
+			await client.query("ROLLBACK");
+			client.release();
+		}
 		res.end("order failed");
 	}
 
 });
-
 
 app.get("/orders/:orderId", async (req,res) => {
 	let orderId = req.params.orderId;
@@ -319,16 +326,36 @@ app.get("/orders/:orderId", async (req,res) => {
 		res.status(400).end(err);
 	}
 });
-
-
 // confirm order given orderID
 app.post("/orders/:orderId/confirm", async (req, res)=> {
 		let orderId = req.params.orderId;
+		let carrierId = req.body.carrierId;
 		try {
-			let results = await pool.query("UPDATE orders SET done=true WHERE order_id=$1",[orderId]);
-			res.status(200).end();
+			let order = await pool.query("SELECT status FROM orders WHERE order_id=$1",[orderId]);
+			if(order.rows[0].status === 'pending'){
+				await pool.query("UPDATE orders SET status='confirmed' WHERE order_id=$1",[orderId]);
+			} else {
+				res.status("405").end("order isn't pending to be confirmed");
+			}
+			res.status(200).end("request successful");
 		} catch (err) {
-			res.status(409).end();
+			res.status(400).end();
+		}
+});
+
+app.post("/orders/:orderId/delivered", async (req, res)=> {
+		let orderId = req.params.orderId;
+		try {
+			let order = await pool.query("SELECT status FROM orders WHERE order_id=$1",[orderId]);
+			console.log(order.rows);
+			if(order.rows[0].status === 'confirmed'){
+				await pool.query("UPDATE orders SET status='delivered' WHERE order_id=$1",[orderId]);
+			} else {
+				res.status("405").end("order isn't confirmed to be delivered");
+			}
+			res.status(200).end("request successful");
+		} catch (err) {
+			res.status(400).end();
 		}
 });
 
@@ -339,7 +366,7 @@ function constructPath(fileName, newFileName, path){
 }
 
 app.post("/signUp", async (req,res) => {
-	console.log("req.body", req.body);
+	//console.log("req.body", req.body);
 	let user = req.body;
 	// name address email pswd gender phone number
 	// userType = client or carrier
@@ -354,7 +381,6 @@ app.post("/signUp", async (req,res) => {
 			let clientId = await uuidv4();
 			if(userPhoto)
 				 newPhotoPath = constructPath(userPhoto.name,"personalPhoto","/photos/clients/"+clientId+"/")
-			console.log(clientId);
 			console.log("--> inserting into clients")
 			const result = await client.query("INSERT INTO clients" +
 			"(client_id,name,email,password,address,phone,gender,photo) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
@@ -422,12 +448,17 @@ app.post("/signUp", async (req,res) => {
 
 app.post("/signIn", async (req,res) => {
 	let user = req.body;
+	console.log(user);
 	if(user.userType === "client" || user.userType === "carrier"){
 		try {
 			console.log("fetching");
 			const results = await pool.query("SELECT * FROM "+ user.userType +"s WHERE email=$1",[user.email]);
 			const result = results.rows[0];
 			console.log(results.rows);
+
+			if(!result)
+				res.end("email doesn't exist");
+
 			if(result.password === user.password)
 				res.json(result);
 			else
@@ -436,7 +467,7 @@ app.post("/signIn", async (req,res) => {
 			res.end(e);
 		}
 	} else {
-		res.end("invalid user type");
+		res.end("invalid user type, try again correctly");
 	}
 });
 
