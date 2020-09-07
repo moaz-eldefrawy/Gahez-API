@@ -32,6 +32,30 @@ app.use(fileUpload({
 }));
 app.use(bodyParser.json());
 
+
+
+const ok = pool.query(
+	`select ord.*,
+(select json_agg(t) from
+  (
+     select it.*,
+      (select json_agg(p) from(
+           SELECT photo as photo_path from item_photos as ip
+           WHERE ip.item_id = it.item_id
+       ) as p) as photo_of_items
+
+      from items as it
+      where it.order_id = ord.order_id
+  ) as t
+) as items
+
+from orders as ord`).then((ok)=>{
+		console.log("ok->", ok.rows[4].items[0].photo_of_items 	);
+
+	}).catch((err)=>{
+		console.error(err);
+	})
+
 /*
 	constants
 */
