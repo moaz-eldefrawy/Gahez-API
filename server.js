@@ -123,7 +123,14 @@ app.get("/orders/:orderId/messages", async (req, res) => {
   }
 })
 
-
+app.get("/clients/:Id", async (req, res) => {
+  try {
+    let client = await pool.query("SELECT name, email, phone, photo, gender FROM clients WHERE client_id=$1", [req.params.Id]);
+    res.json(client.rows[0]);
+  } catch (err) {
+    res.status(404).send(err);
+  }
+});
 app.get("/clients/:clientId/orders", async (req, res) => {
   let clientId = req.params.clientId;
   try {
@@ -134,9 +141,9 @@ app.get("/clients/:clientId/orders", async (req, res) => {
 			(
 				 select it.*,
 					(select json_agg(p) from(
-							 SELECT photo as photo_path from item_photos as ip
+							 SELECT photo as photoPath from item_photos as ip
 							 WHERE ip.item_id = it.item_id
-					 ) as p) as photo_of_items
+					 ) as p) as itemPhotos
 
 					from items as it
 					where it.order_id = ord.order_id
@@ -152,26 +159,6 @@ app.get("/clients/:clientId/orders", async (req, res) => {
   }
 })
 
-app.get("/clients/:Id", async (req, res) => {
-  try {
-    let client = await pool.query("SELECT name, email, phone, photo, gender FROM clients WHERE client_id=$1", [req.params.Id]);
-    res.json(client.rows[0]);
-  } catch (err) {
-    res.status(404).send(err);
-  }
-});
-app.get("/clients/:clientId/orders", async (req, res) => {
-  let id = req.params.clientId;
-  try {
-    const orders = await pool.query("SELECT * from orders LEFT JOIN items ON orders.order_id=items.order_id WHERE client_id=$1", [id]);
-    console.log(orders);
-    res.json(orders.rows);
-  } catch (err) {
-    console.log("error getting client orders ->", err)
-    res.status(404).end("error");
-  }
-})
-
 app.get("/carriers/:Id", async (req, res) => {
   try {
     let {
@@ -183,17 +170,6 @@ app.get("/carriers/:Id", async (req, res) => {
   }
 });
 app.get("/carriers/:carrierId/orders", async (req, res) => {
-  let id = req.params.carrierId;
-  try {
-    const orders = await pool.query("SELECT * from orders LEFT JOIN items ON orders.order_id=items.order_id WHERE carrier_id=$1", [id]);
-    res.end(orders.rows);
-  } catch (err) {
-    console.log("error getting carrier orders ->", err)
-    res.status(404).end(err);
-  }
-})
-
-app.get("/carriers/:carrierId/orders", async (req, res) => {
   let carrierId = req.params.carrierId;
 
   try {
@@ -203,9 +179,9 @@ app.get("/carriers/:carrierId/orders", async (req, res) => {
 		  (
 		     select it.*,
 		      (select json_agg(p) from(
-		           SELECT photo as photo_path from item_photos as ip
+		           SELECT photo as photoPath from item_photos as ip
 		           WHERE ip.item_id = it.item_id
-		       ) as p) as photo_of_items
+		       ) as p) as itemPhotos
 
 		      from items as it
 		      where it.order_id = ord.order_id
@@ -220,20 +196,6 @@ app.get("/carriers/:carrierId/orders", async (req, res) => {
     res.status(404).end();
   }
 })
-
-/*
-	orderDetails: {
-			item1: value1,
-	}
-	deleteItems:[]
-	updateItems:{
-		itemId: {
-			item-Attribute: value
-		}
-
-	}
-	insertItems:
-*/
 
 let userLocations = {};
 /* {
@@ -291,7 +253,6 @@ app.get("/getCarriers/:vehicleType", async (req, res) => {
     res.end("error occurred!");
   }
 });
-
 app.post("/updateLocation", async (req, res) => {
   let x = req.body.x;
   let y = req.body.y;
@@ -306,19 +267,20 @@ app.post("/updateLocation", async (req, res) => {
 /* --------- orders ----------- */
 // not used for now
 
-
 app.post("/orders/updateOrder/:orderId", async (req, res) => {
 
   let orderId = req.params.orderId;
   let clientId = req.body.client_id;
   let order = req.body;
-  let items = order.items;
+  let items = order.items || [];
   var client;
   try {
     client = await pool.connect()
+		await client.query("BEGIN")
     await client.query("DELETE FROM orders WHERE order_id=$1", [orderId]);
-    const result = await client.query("INSERT INTO orders(order_id,fee,status,construction_date,receiver_name,receiver_phone,client_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING order_id",
-      [orderId, order.fee, "pending", order.construction_date, order.receiver_name, order.receiver_phone, clientId]);
+    const result = await client.query("INSERT INTO orders(order_id,fee,status,construction_date,receiver_name,receiver_phone,client_id)"+
+		" VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING order_id",
+      [orderId, order.fee, "pending", order.constructionDate, order.receiverName, order.receiverPhone, clientId]);
     console.log(result.rows[0].order_id);
 
     for (var i = 0; i < items.length; i++) {
@@ -327,13 +289,17 @@ app.post("/orders/updateOrder/:orderId", async (req, res) => {
         [items[i].name, items[i].description, items[i].weight, items[i].price, result.rows[0].order_id]);
     }
 
-    await Promise.all(items).then(() => {
+    await Promise.all(items).then(async() => {
+			await client.query("COMMIT")
       client.release();
       res.end("order id:" + orderId);
     })
   } catch (err) {
     console.error(err);
-    if (client) client.release();
+    if (client) {
+			await client.query("ROLLBACK")
+			client.release()
+		}
     res.end("error updating the order");
   }
 })
@@ -344,24 +310,43 @@ app.post("/orders/newOrder", async (req, res) => {
   let order = req.body;
   let items = order.items || [];
   console.log("order", req.body);
-  console.log("item", items)
+  console.log("items->", items)
   var client;
   try {
     client = await pool.connect();
     await client.query("BEGIN")
     let orderId = await uuidv4();
-    const result = await client.query("INSERT INTO orders(order_id,fee,status,delivery_date,receiver_name,receiver_phone,client_id,carrier_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
+    const result = await client.query("INSERT INTO orders(order_id,fee,status,delivery_date,"+
+		"receiver_name,receiver_phone,client_id,carrier_id)"+
+		" VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
       [orderId, order.fee, "pending", order.deliveryDate, order.receiverName, order.receiverPhone, clientId, carrierId]);
 
+		let processes = [];
     for (var i = 0; i < items.length; i++) {
       console.log("item ->", items[i]);
       items[i] = JSON.parse(items[i]);
+			console.log(items[i].images.length);
       let itemId = await uuidv4();
-      items[i] = client.query("INSERT INTO items(item_id,name,description,weight,price,order_id) VALUES($1,$2,$3,$4,$5,$6)",
+      let processZero = client.query("INSERT INTO items(item_id,name,description,weight,price,order_id)"+
+			" VALUES($1,$2,$3,$4,$5,$6)",
         [itemId, items[i].name, items[i].description, items[i].weight, items[i].price, orderId]);
+			processes.push(processZero)
+
+			for(var j=0; (items[i].images && j<items[i].images.length); j++){
+				let imgName = items[i].images[j]
+				let img = req.files[imgName]
+				console.log("img->", imgName);
+				let imgPath = "/photos/orders/"+orderId+"/"+itemId+"/"+img.name;
+				let processOne = client.query("INSERT INTO item_photos(item_id,photo) VALUES($1,$2)",
+				[itemId,imgPath]);
+				let processTwo = img.mv("."+imgPath);
+				processes.push(processOne)
+				processes.push(processTwo)
+
+			}
     }
 
-    await Promise.all(items).then(async () => {
+    await Promise.all(processes).then(async () => {
       await client.query("COMMIT");
       client.release();
       res.end("order id:" + orderId);
@@ -372,7 +357,7 @@ app.post("/orders/newOrder", async (req, res) => {
     // the client may not connect thus calling client.release throws an error
     if (client) {
       await client.query("ROLLBACK");
-      client.release();
+      await client.release();
     }
     res.end("order failed");
   }
@@ -382,13 +367,23 @@ app.post("/orders/newOrder", async (req, res) => {
 app.get("/orders/:orderId", async (req, res) => {
   let orderId = req.params.orderId;
   try {
-    let orderRes = await pool.query("SELECT * FROM orders WHERE order_id=$1", [orderId]);
-    let itemRes = await pool.query("SELECT * FROM items WHERE order_id=$1", [orderId]);
-    let order = {};
-    order.orderInfo = orderRes.rows[0];
-    order.items = itemRes.rows;
-    console.log(order);
-    res.json(order);
+		const clientOrders = await pool.query(
+			`select ord.*,
+		(select json_agg(t) from
+			(
+				 select it.*,
+					(select json_agg(p) from(
+							 SELECT photo as photoPath from item_photos as ip
+							 WHERE ip.item_id = it.item_id
+					 ) as p) as itemPhotos
+
+					from items as it
+					where it.order_id = ord.order_id
+			) as t
+		) as items
+
+		from orders as ord WHERE order_id=$1`, [orderId]);
+    res.json(clientOrders.rows[0]);
   } catch (err) {
     console.error(err);
     res.status(400).end(err);
