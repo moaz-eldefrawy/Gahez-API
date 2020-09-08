@@ -343,7 +343,9 @@ app.post("/orders/newOrder", async (req, res) => {
   let carrierId = req.body.carrierId;
   let order = req.body;
   let items = order.items || [];
-  console.log("order", req.body);
+	if(Array.isArray(items) === false) // means one item
+			items = [items]
+	console.log("order", req.body);
   console.log("items->", items)
   var client;
   try {
@@ -357,8 +359,8 @@ app.post("/orders/newOrder", async (req, res) => {
 
 		let processes = [];
     for (var i = 0; i < items.length; i++) {
+      console.log("item ->", items[i]);
       items[i] = JSON.parse(items[i]);
-			console.log("item ->", items[i]);
 			console.log(items[i].images.length);
       let itemId = await uuidv4();
       let processZero = client.query("INSERT INTO items(item_id,name,description,weight,price,order_id)"+
