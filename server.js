@@ -85,25 +85,36 @@ async function getImages(images, names, path) {
 
 /* --------- CHAT  ------------*/
 io.on("connection", async (socket) => {
-  console.log("new conenction");
-  let clientId = socket.handshake.query.clientId;
-  let carrierId = socket.handshake.query.carrierId;
-  let orderId = socket.handshake.query.orderId;
-  let sender = socket.handshake.query.sender;
+  console.log("new connection");
+	var id = socket.handshake.query.id
+	console.log(id);
   // TODO: verify user first.
-  let roomId = clientId + "," + carrierId;
-  socket.join(roomId);
-  io.in(roomId).emit('chat message', 'Chat Opened');
-  socket.on('chat message', async (msg) => {
+	socket.join(id)
+	var clientId,roomId=123,carrierId,orderId;
+
+	socket.on("join chat", async(info)=>{
+
+			clientId = info.clientId;
+			carrierId = info.carrierId;
+			orderId = info.orderId
+			roomId = clientId + "," + carrierId;
+			soconsole.log("roomId->",roomId);
+			socket.join(roomId);
+			io.in(id).emit('join chat', 'chat joined');
+	})
+
+	socket.on('chat message', async (msg) => {
     try {
+			console.log("this,",roomId);
       io.to(roomId).emit('chat message', msg);
-      await pool.query("INSERT INTO chats(client_id,carrier_id,order_id,line_text,created_at,sender) VALUES($1,$2,$3,$4,$5,$6)",
-        [clientId, carrierId, orderId, msg, getCurrentDate(), sender]);
+      await pool.query("INSERT INTO chats(client_id,carrier_id,order_id,message,created_at,sender) VALUES($1,$2,$3,$4,$5,$6)",
+        [clientId, carrierId, orderId, msg, getCurrentDate(), "some sender for now"]);
     } catch (err) {
       console.log(err);
-      io.to(roomId).emit('error', "message error:", err);
+      io.to(roomId).emit('error', "message error: " + err);
     }
   })
+
   socket.on("disconnect", () => {
     console.log("user disconnected!");
   })
@@ -322,7 +333,7 @@ app.post("/orders/updateOrder/:orderId", async (req, res) => {
       await client.query("ROLLBACK");
       await client.release();
     }
-    res.end("order failed");
+    res.status.send({error:err});
   }
 
 })
@@ -382,7 +393,7 @@ app.post("/orders/newOrder", async (req, res) => {
       await client.query("ROLLBACK");
       await client.release();
     }
-    res.end("order failed");
+    res.status.send({error:err});
   }
 
 });
@@ -480,7 +491,7 @@ app.post("/signUp", async (req, res) => {
     } catch (err) {
       console.log("catching failture -> ", err);
       if (client) await client.query("ROLLBACK");
-      res.status(500).send(err);
+      res.status(500).send({error:err});
     } finally {
       if (client) client.release();
     }
@@ -524,7 +535,7 @@ app.post("/signUp", async (req, res) => {
     } catch (err) {
       console.log("catch outside try -> ", err)
       if (client) await client.query("ROLLBACK");
-      res.status(400).send(err);
+      res.status(400).send({error:err});
     } finally {
       if (client) client.release();
     }
@@ -565,6 +576,41 @@ app.all("*", (req, res) => {
 /*
 	activation
 */
-app.listen(port, () => {
+
+http.listen(port, () => {
   console.log("Listening on port", port);
 });
+
+
+
+
+/*
+
+$(function () {
+	const urlParams = new URLSearchParams(window.location.search);
+	const id = urlParams.get('id');
+	console.log(id)
+	var socket = io("http://localhost:3000/",
+	{ query: "id="+id });
+
+	socket.emit("new chat", {
+		clientId:"92ceef57-30c0-402d-90f4-9ee737dc8684",
+		carrierId:"5be02fe2-c154-4f0a-a8cf-f23414d1d20b",
+	});
+
+	socket.on("new chat", (msg)=>{
+
+			if(msg == "chat opened"){
+				$('form').submit(function(e){
+					e.preventDefault(); // prevents page reloading
+					socket.emit('chat message', $('#m').val());
+					$('#m').val('');
+					return false;
+				});
+				socket.on('chat message', function(msg){
+					$('#messages').append($('<li>').text(msg));
+				});
+			}
+	})
+
+});*/

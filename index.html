@@ -16,16 +16,32 @@
     <script src="https://code.jquery.com/jquery-3.4.1.min.js"></script>
     <script>
     $(function () {
-      var socket = io("http://127.0.0.1:3000/",{ query: "clientId=6&carrierId=16&orderId=5&sender=6" });
-      $('form').submit(function(e){
-        e.preventDefault(); // prevents page reloading
-        socket.emit('chat message', $('#m').val());
-        $('#m').val('');
-        return false;
+      const urlParams = new URLSearchParams(window.location.search);
+      const id = urlParams.get('id');
+      console.log(id)
+      var socket = io("http://localhost:3000/",
+      { query: "id="+id });
+
+      socket.emit("join chat", {
+        clientId:"92ceef57-30c0-402d-90f4-9ee737dc8684",
+        carrierId:"5be02fe2-c154-4f0a-a8cf-f23414d1d20b",
       });
-      socket.on('chat message', function(msg){
-        $('#messages').append($('<li>').text(msg));
-      });
+
+      socket.on("join chat", (msg)=>{
+
+          if(msg == "chat joined"){
+            $('form').submit(function(e){
+              e.preventDefault(); // prevents page reloading
+              socket.emit('chat message', $('#m').val());
+              $('#m').val('');
+              return false;
+            });
+            socket.on('chat message', function(msg){
+              $('#messages').append($('<li>').text(msg));
+            });
+          }
+      })
+
     });
       </script>
   </head>
