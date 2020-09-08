@@ -55,7 +55,7 @@ app.post("/test", async (req, res) => {
   res.json(req.query);
 })
 app.get("/", async (req, res) => {
-  res.end("main page");
+  res.sendFile(__dirname + '/index.html');
 });
 
 
@@ -187,7 +187,6 @@ app.get("/carriers/:carrierId/orders", async (req, res) => {
 		      where it.order_id = ord.order_id
 		  ) as t
 		) as items
-
 		from orders as ord WHERE carrier_id=$1`, [carrierId])
 
     res.json(carrierOrders.rows);
@@ -269,39 +268,63 @@ app.post("/updateLocation", async (req, res) => {
 
 app.post("/orders/updateOrder/:orderId", async (req, res) => {
 
-  let orderId = req.params.orderId;
-  let clientId = req.body.client_id;
-  let order = req.body;
+	let clientId = req.body.clientId;
+  let carrierId = req.body.carrierId;
+	let order = req.body;
+	let orderId = req.params.orderId;
   let items = order.items || [];
+  console.log("order", req.body);
+  console.log("items->", items)
   var client;
   try {
-    client = await pool.connect()
-		await client.query("BEGIN")
-    await client.query("DELETE FROM orders WHERE order_id=$1", [orderId]);
-    const result = await client.query("INSERT INTO orders(order_id,fee,status,construction_date,receiver_name,receiver_phone,client_id)"+
-		" VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING order_id",
-      [orderId, order.fee, "pending", order.constructionDate, order.receiverName, order.receiverPhone, clientId]);
-    console.log(result.rows[0].order_id);
+    client = await pool.connect();
+    await client.query("BEGIN")
+		await client.query("DELETE FROM orders WHERE order_id=$1", [orderId]);
+    const result = await client.query("INSERT INTO orders(order_id,fee,status,delivery_date,"+
+		"receiver_name,receiver_phone,client_id,carrier_id)"+
+		" VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
+      [orderId, order.fee, "pending", order.deliveryDate, order.receiverName, order.receiverPhone, clientId, carrierId]);
 
+		let processes = [];
     for (var i = 0; i < items.length; i++) {
-      console.log("item ->", items[i]);
-      items[i] = client.query("INSERT INTO items(name,description,weight,price,order_id) VALUES($1,$2,$3,$4,$5)",
-        [items[i].name, items[i].description, items[i].weight, items[i].price, result.rows[0].order_id]);
+      items[i] = JSON.parse(items[i]);
+			console.log("item ->", items[i]);
+			let itemId = await uuidv4();
+      let processZero = client.query("INSERT INTO items(item_id,name,description,weight,price,order_id)"+
+			" VALUES($1,$2,$3,$4,$5,$6)",
+        [itemId, items[i].name, items[i].description, items[i].weight, items[i].price, orderId]);
+			processes.push(processZero)
+
+			for(var j=0; (items[i].images && j<items[i].images.length); j++){
+				let imgName = items[i].images[j]
+				let img = req.files[imgName]
+				console.log("img->", img);
+				let imgPath = "/photos/orders/"+orderId+"/"+itemId+"/"+img.name;
+				let processOne = client.query("INSERT INTO item_photos(item_id,photo) VALUES($1,$2)",
+				[itemId,imgPath]);
+				let processTwo = img.mv("."+imgPath);
+				processes.push(processOne)
+				processes.push(processTwo)
+
+			}
     }
 
-    await Promise.all(items).then(async() => {
-			await client.query("COMMIT")
+    await Promise.all(processes).then(async () => {
+      await client.query("COMMIT");
       client.release();
       res.end("order id:" + orderId);
     })
+
   } catch (err) {
     console.error(err);
+    // the client may not connect thus calling client.release throws an error
     if (client) {
-			await client.query("ROLLBACK")
-			client.release()
-		}
-    res.end("error updating the order");
+      await client.query("ROLLBACK");
+      await client.release();
+    }
+    res.end("order failed");
   }
+
 })
 
 app.post("/orders/newOrder", async (req, res) => {
@@ -395,14 +418,15 @@ app.post("/orders/:orderId/confirm", async (req, res) => {
   let carrierId = req.body.carrierId;
   try {
     let order = await pool.query("SELECT status FROM orders WHERE order_id=$1", [orderId]);
-    if (order.rows[0].status === 'pending') {
-      await pool.query("UPDATE orders SET status='confirmed' WHERE order_id=$1", [orderId]);
+    if (order.rows[0].status === 'pending' && carrierId) {
+      await pool.query("UPDATE orders SET status='confirmed', carrier_id=$1 WHERE order_id=$2", [carrierId,orderId]);
     } else {
-      res.status("405").end("order isn't pending to be confirmed");
+      res.status("405").end("order isn't pending to be confirmed or carrierId not given");
     }
     res.status(200).end("request successful");
   } catch (err) {
-    res.status(400).end();
+		console.error(err)
+    res.status(400).send(err);
   }
 });
 
