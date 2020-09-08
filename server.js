@@ -284,6 +284,8 @@ app.post("/orders/updateOrder/:orderId", async (req, res) => {
 	let order = req.body;
 	let orderId = req.params.orderId;
   let items = order.items || [];
+	if(Array.isArray(items) === false) // means one item
+			items = [items]
   console.log("order", req.body);
   console.log("items->", items)
   var client;
@@ -323,7 +325,7 @@ app.post("/orders/updateOrder/:orderId", async (req, res) => {
     await Promise.all(processes).then(async () => {
       await client.query("COMMIT");
       client.release();
-      res.end("order id:" + orderId);
+      res.end("orderId:", orderId);
     })
 
   } catch (err) {
@@ -359,10 +361,9 @@ app.post("/orders/newOrder", async (req, res) => {
 
 		let processes = [];
     for (var i = 0; i < items.length; i++) {
-      console.log("item ->", items[i]);
       items[i] = JSON.parse(items[i]);
-			console.log(items[i].images.length);
-      let itemId = await uuidv4();
+			console.log("item ->", items[i]);
+			let itemId = await uuidv4();
       let processZero = client.query("INSERT INTO items(item_id,name,description,weight,price,order_id)"+
 			" VALUES($1,$2,$3,$4,$5,$6)",
         [itemId, items[i].name, items[i].description, items[i].weight, items[i].price, orderId]);
@@ -385,7 +386,7 @@ app.post("/orders/newOrder", async (req, res) => {
     await Promise.all(processes).then(async () => {
       await client.query("COMMIT");
       client.release();
-      res.end("order id:" + orderId);
+      res.json("orderId:", orderId);
     })
 
   } catch (err) {
