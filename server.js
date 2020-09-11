@@ -53,7 +53,8 @@ app.post("/test", async (req, res) => {
   console.log("query", req.query);
   console.log("body", req.body);
   res.json(req.query);
-})
+});
+
 app.get("/", async (req, res) => {
   res.sendFile(__dirname + '/index.html');
 });
@@ -84,28 +85,28 @@ async function getImages(images, names, path) {
 
 
 /* --------- CHAT  ------------*/
-io.on("connection", async (socket) => {
+io.on("connection", async function (socket) {
   console.log("new connection");
 	var id = socket.handshake.query.id
 	console.log(id);
-  // TODO: verify user first.
+  // TODO: verify user first. (io.use())
 	socket.join(id)
-	var clientId,roomId=123,carrierId,orderId;
+	var clientId,roomId = 123,carrierId,orderId;
 
-	socket.on("join chat", async(info)=>{
+	socket.on("join chat", async function (info){
 
 			clientId = info.clientId;
 			carrierId = info.carrierId;
 			orderId = info.orderId
 			roomId = clientId + "," + carrierId;
-			soconsole.log("roomId->",roomId);
+			console.log("roomId->",roomId);
 			socket.join(roomId);
 			io.in(id).emit('join chat', 'chat joined');
 	})
 
-	socket.on('chat message', async (msg) => {
+	socket.on('chat message', async function (msg)  {
     try {
-			console.log("this,",roomId);
+			console.log("chat msg on roomId ->",roomId);
       io.to(roomId).emit('chat message', msg);
       await pool.query("INSERT INTO chats(client_id,carrier_id,order_id,message,created_at,sender) VALUES($1,$2,$3,$4,$5,$6)",
         [clientId, carrierId, orderId, msg, getCurrentDate(), "some sender for now"]);
@@ -142,6 +143,7 @@ app.get("/clients/:Id", async (req, res) => {
     res.status(404).send(err);
   }
 });
+
 app.get("/clients/:clientId/orders", async (req, res) => {
   let clientId = req.params.clientId;
   try {
@@ -180,6 +182,7 @@ app.get("/carriers/:Id", async (req, res) => {
     res.status(404).send(err);
   }
 });
+
 app.get("/carriers/:carrierId/orders", async (req, res) => {
   let carrierId = req.params.carrierId;
 
@@ -264,14 +267,7 @@ app.get("/getCarriers/:vehicleType", async (req, res) => {
   }
 });
 app.post("/updateLocation", async (req, res) => {
-  let x = req.body.x;
-  let y = req.body.y;
-  let userId = req.body.userId;
-  console.log(x, y, userId);
-  userLocations[userId] = {};
-  userLocations[userId].x = x;
-  userLocations[userId].y = y;
-  res.status(200).end();
+
 });
 
 /* --------- orders ----------- */
@@ -588,32 +584,9 @@ http.listen(port, () => {
 
 
 /*
+1- UPDATE DATABASE file with facebook (ur messages with abdelrahman)
+2- authorization
+3- create routers for users and orders
+4-
 
-$(function () {
-	const urlParams = new URLSearchParams(window.location.search);
-	const id = urlParams.get('id');
-	console.log(id)
-	var socket = io("http://localhost:3000/",
-	{ query: "id="+id });
-
-	socket.emit("new chat", {
-		clientId:"92ceef57-30c0-402d-90f4-9ee737dc8684",
-		carrierId:"5be02fe2-c154-4f0a-a8cf-f23414d1d20b",
-	});
-
-	socket.on("new chat", (msg)=>{
-
-			if(msg == "chat opened"){
-				$('form').submit(function(e){
-					e.preventDefault(); // prevents page reloading
-					socket.emit('chat message', $('#m').val());
-					$('#m').val('');
-					return false;
-				});
-				socket.on('chat message', function(msg){
-					$('#messages').append($('<li>').text(msg));
-				});
-			}
-	})
-
-});*/
+*/
