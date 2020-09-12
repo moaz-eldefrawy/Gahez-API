@@ -402,7 +402,7 @@ app.post("/orders/newOrder", async (req, res) => {
     await Promise.all(processes).then(async () => {
       await client.query("COMMIT");
       client.release();
-      res.json("orderId:", orderId);
+      res.status(200).end("orderId:"+ orderId);
     })
 
   } catch (err) {
