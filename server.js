@@ -351,7 +351,7 @@ app.post("/orders/updateOrder/:orderId", async (req, res) => {
       await client.query("ROLLBACK");
       await client.release();
     }
-    res.status.send({error:err});
+    res.status(500).send(err);
   }
 
 })
@@ -412,7 +412,7 @@ app.post("/orders/newOrder", async (req, res) => {
       await client.query("ROLLBACK");
       await client.release();
     }
-    res.status(500).send({error:err});
+    res.status(500).send(err);
   }
 
 });
