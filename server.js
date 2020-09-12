@@ -49,10 +49,8 @@ const radiusDistance = 10;
 	Routes
 */
 
-app.post("/test", async (req, res) => {
-  console.log("query", req.query);
-  console.log("body", req.body);
-  res.json(req.query);
+app.get("/test", async (req, res) => {
+  res.sendFile(__dirname + "/test.html")
 });
 
 app.get("/", async (req, res) => {
@@ -87,34 +85,56 @@ async function getImages(images, names, path) {
 /* --------- CHAT  ------------*/
 io.on("connection", async function (socket) {
   console.log("new connection");
-	var id = socket.handshake.query.id
-	console.log(id);
+	var id = socket.handshake.query && socket.handshake.query.id;
+  var userType = socket.handshake.query && socket.handshake.query.userType;
+	console.log(userType, id);
   // TODO: verify user first. (io.use())
 	socket.join(id)
-	var clientId,roomId = 123,carrierId,orderId;
-
+	var clientId, roomId, carrierId,orderId;
+  var accpetingCarrier,acceptedOrder;
+  // chat
 	socket.on("join chat", async function (info){
-
 			clientId = info.clientId;
 			carrierId = info.carrierId;
-			orderId = info.orderId
+			orderId = info.orderId;
 			roomId = clientId + "," + carrierId;
 			console.log("roomId->",roomId);
 			socket.join(roomId);
 			io.in(id).emit('join chat', 'chat joined');
 	})
 
-	socket.on('chat message', async function (msg)  {
+  /* obj = {msg: clientId: carrierId:} */
+ 	socket.on('chat message', async function (obj)  {
     try {
+      roomId = obj.clientId+","+obj.carrierId
 			console.log("chat msg on roomId ->",roomId);
-      io.to(roomId).emit('chat message', msg);
       await pool.query("INSERT INTO chats(client_id,carrier_id,order_id,message,created_at,sender) VALUES($1,$2,$3,$4,$5,$6)",
-        [clientId, carrierId, orderId, msg, getCurrentDate(), "some sender for now"]);
+        [clientId, carrierId, orderId, obj.msg, getCurrentDate(), userType]);
+      io.to(roomId).emit('chat message', obj.msg);
     } catch (err) {
       console.log(err);
       io.to(roomId).emit('error', "message error: " + err);
     }
   })
+
+
+  // orders
+    /* conformation */
+  socket.on("notifyCarrier", async function(obj){
+    let order = await pool.query("SELECT * FROM orders WHERE order_id=$1",[obj.orderId]);
+    io.to(obj.carrierId).emit("newOrder",order.rows[0]);
+  })
+
+  socket.on("acceptOrder", async function(obj){
+    accpetingCarrier = obj.carrierId;
+    acceptedOrder = obj.orderId;
+    io.on(accpetingCarrier).emit("acceptOrder", {orderId:acceptedOrder})
+  })
+
+  socket.on("clientConfirm", (obj)=>{
+    io.in(currClientId).emit("confirmOrder",)
+  })
+
 
   socket.on("disconnect", () => {
     console.log("user disconnected!");
@@ -392,7 +412,7 @@ app.post("/orders/newOrder", async (req, res) => {
       await client.query("ROLLBACK");
       await client.release();
     }
-    res.status.send({error:err});
+    res.status(500).send({error:err});
   }
 
 });
