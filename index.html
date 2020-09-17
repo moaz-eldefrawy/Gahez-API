@@ -18,9 +18,12 @@
     $(function () {
       const urlParams = new URLSearchParams(window.location.search);
       const id = urlParams.get('id');
+      const userType = urlParams.get('userType');
       console.log(id)
       var socket = io("http://localhost:3000/",
-      { query: "id="+id });
+      { query: "id="+id+"&userType="+userType });
+
+      socket.on("error", (err)=>{ console.log(err) })
 
       socket.emit("join chat", {
         clientId:"92ceef57-30c0-402d-90f4-9ee737dc8684",
@@ -30,17 +33,25 @@
       socket.on("join chat", (msg)=>{
 
           if(msg == "chat joined"){
-            $('form').submit(function(e){
-              e.preventDefault(); // prevents page reloading
-              socket.emit('chat message', $('#m').val());
-              $('#m').val('');
-              return false;
-            });
-            socket.on('chat message', function(msg){
-              $('#messages').append($('<li>').text(msg));
-            });
+            console.log("chat joined")
           }
       })
+
+      $('form').submit(function(e){
+        e.preventDefault(); // prevents page reloading
+        socket.emit('chat message',
+        {
+          clientId: "92ceef57-30c0-402d-90f4-9ee737dc8684",
+          carrierId:"5be02fe2-c154-4f0a-a8cf-f23414d1d20b",
+          msg: $('#m').val()
+        }
+      );
+        $('#m').val('');
+        return false;
+      });
+      socket.on('chat message', function(msg){
+        $('#messages').append($('<li>').text(msg));
+      });
 
     });
       </script>

@@ -1,0 +1,64 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Socket.IO chat</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { font: 13px Helvetica, Arial; }
+      form { background: #000; padding: 3px; position: fixed; bottom: 0; width: 100%; }
+      form input { border: 0; padding: 10px; width: 90%; margin-right: 0.5%; }
+      form button { width: 9%; background: rgb(130, 224, 255); border: none; padding: 10px; }
+      #messages { list-style-type: none; margin: 0; padding: 0; }
+      #messages li { padding: 5px 10px; }
+      #messages li:nth-child(odd) { background: #eee; }
+    </style>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://code.jquery.com/jquery-3.4.1.min.js"></script>
+    <script>
+    $(function () {
+      const urlParams = new URLSearchParams(window.location.search);
+      const id = urlParams.get('id');
+      const userType = urlParams.get('userType');
+      console.log(id)
+      var socket = io("http://localhost:3000/",
+      { query: "id="+id+"&userType="+userType });
+
+
+      socket.emit("join chat", {
+        clientId:"92ceef57-30c0-402d-90f4-9ee737dc8684",
+        carrierId:"5be02fe2-c154-4f0a-a8cf-f23414d1d20b",
+      });
+
+      socket.on("join chat", (msg)=>{
+
+          if(msg == "chat joined"){
+            console.log("chat joined")
+          }
+      })
+
+      $('form').submit(function(e){
+        e.preventDefault(); // prevents page reloading
+        socket.emit('chat message',
+        {
+          clientId: "92ceef57-30c0-402d-90f4-9ee737dc8684",
+          carrierId:"5be02fe2-c154-4f0a-a8cf-f23414d1d20b",
+          msg: $('#m').val()
+        }
+      );
+        $('#m').val('');
+        return false;
+      });
+      socket.on('chat message', function(msg){
+        $('#messages').append($('<li>').text(msg));
+      });
+
+    });
+      </script>
+  </head>
+  <body>
+    <ul id="messages"></ul>
+    <form action="">
+      <input id="m" autocomplete="off" /><button>Send</button>
+    </form>
+  </body>
+</html>

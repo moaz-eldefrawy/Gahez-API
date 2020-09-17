@@ -8,6 +8,8 @@ const http = require("http").createServer(app);
 const io = require("socket.io")(http, {
   perMessageDeflate: false
 });
+const socketRouting = require("./routes/socket")
+
 const {
   v4: uuidv4
 } = require('uuid');
@@ -17,14 +19,9 @@ const passwordHash = require("password-hash");
 const fileUpload = require('express-fileupload');
 const {
   Pool,
-  Client
-} = require("pg");
-require('dotenv').config()
-const connectionString = process.env.DB_CONNECTION_STRING;
-const pool = new Pool({
-  connectionString: connectionString
-});
-
+  Client,
+  pool
+} = require("./db/index.js");
 
 /* middlewares*/
 app.disable('x-powered-by');
@@ -59,6 +56,28 @@ app.get("/", async (req, res) => {
 
 
 /* helping functions */
+
+function throwErrorIfUndefined(variable){
+//  console.log(variable)
+  if(variable == undefined) throws("undefined variable")
+  if(Array.isArray(variable) === true){
+    for(let i=0; i<variable.length; i++){
+      if(variable[i] == undefined) throws ("undefined variable");
+    }
+  }
+}
+
+function isUndefined(variable){
+//  console.log(variable)
+  if(variable == undefined) return true
+  if(Array.isArray(variable) === true){
+    for(let i=0; i<variable.length; i++){
+      if(variable[i] == undefined) return true
+    }
+  }
+  return false
+}
+
 function getCurrentDate() {
 
   function appendLeadingZeroes(n) {
@@ -82,58 +101,36 @@ async function getImages(images, names, path) {
 }
 
 
-/* --------- CHAT  ------------*/
+/* --------- CHAT and orderConfirmation ------------*/
+//io.use()
+
+// orders that are confirmed by the client but not the carrier (yet)
+io.clientConfirmedOrders = {}
 io.on("connection", async function (socket) {
   console.log("new connection");
-	var id = socket.handshake.query && socket.handshake.query.id;
-  var userType = socket.handshake.query && socket.handshake.query.userType;
-	console.log(userType, id);
+
+
+
+  socket.userId = socket.handshake.query && socket.handshake.query.id;
+  socket.userType = socket.handshake.query && socket.handshake.query.userType;
+  if(isUndefined[socket.userId,socket.userType]){
+    socket.emit("erorr", "id or userType isn't defined")
+    socket.disconnect(true)
+    return
+  }
+
+  socketRouting.clientOrCarrier(socket,io);
+
+  if(socket.userType === "client"){
+    socketRouting.client(socket,io)
+  } else if (socket.userType === "carrier"){
+    socketRouting.carrier(socket,io);
+  } else {
+    socket.emit("erorr", "userType isn't defined correctly")
+    socket.disconnect(true)
+    return false;
+  }
   // TODO: verify user first. (io.use())
-	socket.join(id)
-	var clientId, roomId, carrierId,orderId;
-  var accpetingCarrier,acceptedOrder;
-  // chat
-	socket.on("join chat", async function (info){
-			clientId = info.clientId;
-			carrierId = info.carrierId;
-			orderId = info.orderId;
-			roomId = clientId + "," + carrierId;
-			console.log("roomId->",roomId);
-			socket.join(roomId);
-			io.in(id).emit('join chat', 'chat joined');
-	})
-
-  /* obj = {msg: clientId: carrierId:} */
- 	socket.on('chat message', async function (obj)  {
-    try {
-      roomId = obj.clientId+","+obj.carrierId
-			console.log("chat msg on roomId ->",roomId);
-      await pool.query("INSERT INTO chats(client_id,carrier_id,order_id,message,created_at,sender) VALUES($1,$2,$3,$4,$5,$6)",
-        [clientId, carrierId, orderId, obj.msg, getCurrentDate(), userType]);
-      io.to(roomId).emit('chat message', obj.msg);
-    } catch (err) {
-      console.log(err);
-      io.to(roomId).emit('error', "message error: " + err);
-    }
-  })
-
-
-  // orders
-    /* conformation */
-  socket.on("notifyCarrier", async function(obj){
-    let order = await pool.query("SELECT * FROM orders WHERE order_id=$1",[obj.orderId]);
-    io.to(obj.carrierId).emit("newOrder",order.rows[0]);
-  })
-
-  socket.on("acceptOrder", async function(obj){
-    accpetingCarrier = obj.carrierId;
-    acceptedOrder = obj.orderId;
-    io.on(accpetingCarrier).emit("acceptOrder", {orderId:acceptedOrder})
-  })
-
-  socket.on("clientConfirm", (obj)=>{
-    io.in(currClientId).emit("confirmOrder",)
-  })
 
 
   socket.on("disconnect", () => {
@@ -360,13 +357,11 @@ app.post("/orders/newOrder", async (req, res) => {
   let clientId = req.body.clientId;
   let carrierId = req.body.carrierId;
   let order = req.body;
-  let items = order.items || [];
-	if(Array.isArray(items) === false) // means one item
-			items = [items]
 	console.log("order", req.body);
-  console.log("items->", items)
   var client;
   try {
+    let items = JSON.parse(order.items)
+    console.log("items->", items)
     client = await pool.connect();
     await client.query("BEGIN")
     let orderId = await uuidv4();
@@ -377,8 +372,7 @@ app.post("/orders/newOrder", async (req, res) => {
 
 		let processes = [];
     for (var i = 0; i < items.length; i++) {
-      items[i] = JSON.parse(items[i]);
-			console.log("item ->", items[i]);
+      console.log("item ->", items[i]);
 			let itemId = await uuidv4();
       let processZero = client.query("INSERT INTO items(item_id,name,description,weight,price,order_id)"+
 			" VALUES($1,$2,$3,$4,$5,$6)",
